@@ -18,7 +18,7 @@ What kind of change does this PR introduce?
 [ ] Build related changes
 [ ] CI related changes
 [ ] Documentation content changes
-[ ] Application (the showcase website) / infrastructure changes
+[ ] Application (the showcase constant) / infrastructure changes
 [ ] Other... Please describe:
 ```
 

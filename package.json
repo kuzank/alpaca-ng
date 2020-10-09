@@ -22,7 +22,7 @@
   ],
   "scripts": {
     "ng": "ng",
-    "start": "ng serve -o",
+    "start": "ng serve -o --port 4201 --proxy-config=proxy.conf.json",
     "hmr": "ng serve -c=hmr",
     "build": "node --max_old_space_size=5120 ./node_modules/@angular/cli/bin/ng build --prod",
     "analyze": "node --max_old_space_size=5120 ./node_modules/@angular/cli/bin/ng build --prod --stats-json",
@@ -70,7 +70,8 @@
     "ngx-ueditor": "^10.0.0",
     "ngx-countdown": "^10.0.0",
     "screenfull": "^5.0.2",
-    "qrious": "^4.0.2"
+    "qrious": "^4.0.2",
+    "js-base64": "^2.5.1"
   },
   "devDependencies": {
     "@angular-devkit/build-angular": "~0.1001.0",

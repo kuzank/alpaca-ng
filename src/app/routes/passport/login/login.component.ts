@@ -1,4 +1,4 @@
-import { Component, Inject, OnDestroy, Optional } from '@angular/core';
+import { Component, Inject, OnDestroy, OnInit, Optional } from '@angular/core';
 import { AbstractControl, FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { StartupService } from '@core';
@@ -6,6 +6,7 @@ import { ReuseTabService } from '@delon/abc/reuse-tab';
 import { DA_SERVICE_TOKEN, ITokenService, SocialOpenType, SocialService } from '@delon/auth';
 import { SettingsService, _HttpClient } from '@delon/theme';
 import { environment } from '@env/environment';
+import { website } from '@shared';
 import { NzMessageService } from 'ng-zorro-antd/message';
 
 @Component({
@@ -14,7 +15,21 @@ import { NzMessageService } from 'ng-zorro-antd/message';
   styleUrls: ['./login.component.less'],
   providers: [SocialService],
 })
-export class UserLoginComponent implements OnDestroy {
+export class UserLoginComponent implements OnDestroy, OnInit {
+  validCode = {
+    // 验证码的索引
+    key: '',
+    // 预加载白色背景
+    image: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
+  };
+
+  form: FormGroup;
+  error = '';
+  type = 0;
+
+  count = 0;
+  interval$: any;
+
   constructor(
     fb: FormBuilder,
     private router: Router,
@@ -27,40 +42,22 @@ export class UserLoginComponent implements OnDestroy {
     private startupSrv: StartupService,
     public http: _HttpClient,
     public msg: NzMessageService,
+    private settingService: SettingsService,
   ) {
     this.form = fb.group({
-      userName: [null, [Validators.required, Validators.pattern(/^(admin|user)$/)]],
-      password: [null, [Validators.required, Validators.pattern(/^(ng\-alain\.com)$/)]],
+      tenantId: ['000000', []],
+      userName: ['admin', [Validators.required]],
+      password: ['admin', [Validators.required, Validators.minLength(5)]],
+      code: [null, [Validators.required]],
       mobile: [null, [Validators.required, Validators.pattern(/^1\d{10}$/)]],
       captcha: [null, [Validators.required]],
       remember: [true],
     });
   }
 
-  // #region fields
-
-  get userName(): AbstractControl {
-    return this.form.controls.userName;
+  ngOnInit(): void {
+    this.refreshCode();
   }
-  get password(): AbstractControl {
-    return this.form.controls.password;
-  }
-  get mobile(): AbstractControl {
-    return this.form.controls.mobile;
-  }
-  get captcha(): AbstractControl {
-    return this.form.controls.captcha;
-  }
-  form: FormGroup;
-  error = '';
-  type = 0;
-
-  // #region get captcha
-
-  count = 0;
-  interval$: any;
-
-  // #endregion
 
   switch({ index }: { index: number }): void {
     this.type = index;
@@ -81,47 +78,75 @@ export class UserLoginComponent implements OnDestroy {
     }, 1000);
   }
 
-  // #endregion
-
   submit(): void {
     this.error = '';
     if (this.type === 0) {
-      this.userName.markAsDirty();
-      this.userName.updateValueAndValidity();
-      this.password.markAsDirty();
-      this.password.updateValueAndValidity();
-      if (this.userName.invalid || this.password.invalid) {
-        return;
-      }
+      this.loginByUsername();
     } else {
-      this.mobile.markAsDirty();
-      this.mobile.updateValueAndValidity();
-      this.captcha.markAsDirty();
-      this.captcha.updateValueAndValidity();
-      if (this.mobile.invalid || this.captcha.invalid) {
-        return;
-      }
+      this.loginByPhone();
+    }
+  }
+
+  loginByUsername(): void {
+    this.userName.markAsDirty();
+    this.userName.updateValueAndValidity();
+    this.password.markAsDirty();
+    this.password.updateValueAndValidity();
+    this.code.markAsDirty();
+    this.code.updateValueAndValidity();
+
+    if (this.userName.invalid || this.password.invalid || this.code.invalid) {
+      return;
     }
 
     // 默认配置中对所有HTTP请求都会强制 [校验](https://ng-alain.com/auth/getting-started) 用户 Token
     // 然一般来说登录请求不需要校验，因此可以在请求URL加上：`/login?_allow_anonymous=true` 表示不触发用户 Token 校验
     this.http
-      .post('/login/account?_allow_anonymous=true', {
-        type: this.type,
-        userName: this.userName.value,
-        password: this.password.value,
-      })
+      .post(
+        'api/blade-auth/token?_allow_anonymous=true',
+        {},
+        {
+          grantType: website.captchaMode ? 'captcha' : 'password',
+          tenantId: this.tenantId.value,
+          account: this.userName.value,
+          password: this.password.value,
+          type: 'account',
+        },
+        {
+          headers: {
+            'Captcha-Key': this.validCode.key,
+            'Captcha-Code': this.code.value,
+          },
+        },
+      )
       .subscribe((res) => {
-        if (res.msg !== 'ok') {
-          this.error = res.msg;
-          return;
-        }
         // 清空路由复用信息
         this.reuseTabService.clear();
+
+        const data = res.data;
+        data.token = res.data.accessToken;
+        data.expired = +new Date() + res.data.expiresIn;
+        data.name = res.data.userName;
+        data.id = res.data.userId;
+
+        console.log(data);
+
         // 设置用户Token信息
-        // TODO: Mock expired value
-        res.user.expired = +new Date() + 1000 * 60 * 5;
-        this.tokenService.set(res.user);
+        this.tokenService.set(data);
+
+        // 应用信息：包括站点名、描述、年份
+        this.settingService.setApp({
+          name: website.title,
+          description: '',
+        });
+
+        // 用户信息：包括姓名、头像、邮箱地址
+        this.settingService.setUser({
+          name: res.data.userName,
+          avatar: res.data.avatar,
+          email: '',
+        });
+
         // 重新获取 StartupService 内容，我们始终认为应用信息一般都会受当前用户授权范围而影响
         this.startupSrv.load().then(() => {
           let url = this.tokenService.referrer!.url || '/';
@@ -133,7 +158,24 @@ export class UserLoginComponent implements OnDestroy {
       });
   }
 
-  // #region social
+  loginByPhone(): void {
+    this.mobile.markAsDirty();
+    this.mobile.updateValueAndValidity();
+    this.captcha.markAsDirty();
+    this.captcha.updateValueAndValidity();
+    if (this.mobile.invalid || this.captcha.invalid) {
+      return;
+    }
+
+    // TODO
+  }
+
+  refreshCode(): void {
+    this.http.get('api/blade-auth/captcha?_allow_anonymous=true').subscribe((res) => {
+      this.validCode.key = res.data.key;
+      this.validCode.image = res.data.image;
+    });
+  }
 
   open(type: string, openType: SocialOpenType = 'href'): void {
     let url = ``;
@@ -175,7 +217,29 @@ export class UserLoginComponent implements OnDestroy {
     }
   }
 
-  // #endregion
+  get tenantId(): AbstractControl {
+    return this.form.controls.tenantId;
+  }
+
+  get userName(): AbstractControl {
+    return this.form.controls.userName;
+  }
+
+  get password(): AbstractControl {
+    return this.form.controls.password;
+  }
+
+  get code(): AbstractControl {
+    return this.form.controls.code;
+  }
+
+  get mobile(): AbstractControl {
+    return this.form.controls.mobile;
+  }
+
+  get captcha(): AbstractControl {
+    return this.form.controls.captcha;
+  }
 
   ngOnDestroy(): void {
     if (this.interval$) {
